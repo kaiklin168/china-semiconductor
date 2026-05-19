@@ -1,0 +1,15 @@
+# 中国半导体 Repo 自动化配置
+
+# 每日新闻收集自动化配置
+# 可在 CodeBuddy 中查看和管理这些自动化任务
+
+# 1. 早间新闻收集（08:30）
+# 触发命令: python scripts/daily_news.py
+
+# 2. 收盘后股票分析（15:30）
+# 触发命令: python scripts/daily_analysis.py
+
+# 3. 美股开盘前（21:00）
+# 触发命令: python scripts/daily_analysis.py 688256 688981
+
+# 注意：这些自动化任务需要通过 CodeBuddy 的 automation_update 工具来创建
