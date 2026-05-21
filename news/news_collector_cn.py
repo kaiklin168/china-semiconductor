@@ -38,8 +38,7 @@ print(f"📋 過濾關鍵字: {FILTER_KWS}")
 print(f"🏷️  主題標籤: {TOPIC_LABEL}")
 
 # ===== 设定 =====
-BOT_TOKEN = "8275897123:AAGdznYEtoywrA0mJ-qcXQMJIy1Upa2D5Ec"  # 你的 Bot Token
-CHAT_IDS = ["8696219136", "-1003858055115"]  # 个人用户 + 频道
+# Telegram 配置统一从 tools/telegram_notifier.py 读取
 ARCHIVE_FILE = f"data/news/news_{SEARCH_KW}.md"
 ARCHIVE_JSON = f"data/news/news_{SEARCH_KW}.json"
 
@@ -516,51 +515,60 @@ def send_telegram(news: List[Dict]):
     if not news:
         log("[Telegram] 无文章，跳过")
         return
-    by_source = defaultdict(list)
-    for n in news:
-        by_source[n['source']].append(n)
-    total_sent = 0
-    for src in sorted(by_source.keys()):
-        articles = by_source[src][:10]
-        if not articles:
-            continue
-        keycaps = ["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"]
-        lines = [
-            f"🏷️ <b>{TOPIC_LABEL}</b>",
-            f"📰 <b>{src}</b>",
-            f"━━━━━━━━━━━━━━━━━━━━━━",
-        ]
-        for i, a in enumerate(articles, 1):
-            title = a['title']
-            summary = a.get('summary', '')
-            dt = a.get('datetime', '')[:16]
-            url = a.get('url', '')
-            n = keycaps[i-1] if i <= 10 else str(i)
-            lines.append(f"\n{n} <b>{title}</b>")
-            lines.append(f"🕐{dt}")
-            lines.append(f"🔗{url}")
-            lines.append(f"💬{summary}")
-        full_total = len(by_source[src])
-        if full_total > 10:
-            lines.append(f"\n... 还有 {full_total - 10} 篇")
-        lines.append(f"\n━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append(f"🤖 CodeBuddy | {datetime.now().strftime('%Y/%m/%d %H:%M')}")
-        lines.append(f"🔍 关键字：{TOPIC_LABEL}")
-        text = "\n".join(lines)
-        for chat_id in CHAT_IDS:
-            try:
-                resp = requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={
-                    "chat_id": chat_id, "text": text, "parse_mode": "HTML",
-                    "disable_web_page_preview": "true"
-                }, timeout=30)
-                if resp.json().get('ok'):
-                    log(f"[Telegram] ✅ {src} → {chat_id}")
-                    total_sent += 1
-                else:
-                    log(f"[Telegram] ❌ {src}: {resp.json()}")
-            except Exception as e:
-                log(f"[Telegram] ❌ {src}: {e}")
-    log(f"[Telegram] 发送 {total_sent} 则 ({sum(len(v) for v in by_source.values())} 篇)")
+
+    # 按时间倒序排列
+    news.sort(key=lambda x: x.get('datetime', ''), reverse=True)
+
+    # 导入 Telegram 通知工具配置
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from tools.telegram_notifier import BOT_TOKEN, CHAT_IDS
+
+    keycaps = ["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"]
+    max_items = 10
+
+    # 收集所有来源名称
+    sources = list(dict.fromkeys(n['source'] for n in news))
+    source_list = "、".join(sources)
+
+    lines = [
+        f"📰 <b>中国半导体 | {TOPIC_LABEL}</b>",
+        f"━━━━━━━━━━━━━━━━━━━━━━",
+    ]
+
+    for i, a in enumerate(news[:max_items]):
+        title = a['title']
+        summary = a.get('summary', '')
+        dt = a.get('datetime', '')[:16]
+        url = a.get('url', '')
+        src = a.get('source', '')
+        n = keycaps[i] if i < len(keycaps) else str(i + 1)
+        lines.append(f"\n{n} <b>{title}</b>")
+        lines.append(f"🕐{dt}")
+        lines.append(f"🔗{url}")
+        lines.append(f"💬{summary}")
+
+    if len(news) > max_items:
+        lines.append(f"\n... 还有 {len(news) - max_items} 篇未列出")
+
+    lines.append(f"\n━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append(f"🤖 CodeBuddy | {datetime.now().strftime('%Y/%m/%d %H:%M')}")
+    lines.append(f"📡 来源：{source_list}")
+
+    text = "\n".join(lines)
+    for chat_id in CHAT_IDS:
+        try:
+            resp = requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={
+                "chat_id": chat_id, "text": text, "parse_mode": "HTML",
+                "disable_web_page_preview": True
+            }, timeout=30)
+            if resp.json().get('ok'):
+                log(f"[Telegram] ✅ → {chat_id}")
+            else:
+                log(f"[Telegram] ❌ {chat_id}: {resp.json()}")
+        except Exception as e:
+            log(f"[Telegram] ❌ {chat_id}: {e}")
+    log(f"[Telegram] 发送 {len(news[:max_items])} 篇 → {len(CHAT_IDS)} 频道")
 
 
 def git_sync():
