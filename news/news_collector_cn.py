@@ -18,35 +18,36 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='repla
 import requests
 from bs4 import BeautifulSoup
 
-# ===== CLI 参数 =====
-USER_KEYWORDS = sys.argv[1:] if len(sys.argv) > 1 else []
-if not USER_KEYWORDS:
-    print("用法: python news_collector_cn.py \"關鍵字1\" \"關鍵字2\" ...")
-    print("範例: python news_collector_cn.py \"半導體設備\" \"國產替代\" \"中芯國際\"")
-    sys.exit(1)
-
-# 第一个关键字用于搜索 URL，全部用于标题过滤
-SEARCH_KW = USER_KEYWORDS[0]
-SEARCH_KW_ENCODED = requests.utils.quote(SEARCH_KW)
-FILTER_KWS = [kw.lower() for kw in USER_KEYWORDS]
-TOPIC_LABEL = "、".join(USER_KEYWORDS[:3])
-if len(USER_KEYWORDS) > 3:
-    TOPIC_LABEL += f"等{len(USER_KEYWORDS)}個關鍵字"
-
-print(f"🔍 搜尋關鍵字: {SEARCH_KW}")
-print(f"📋 過濾關鍵字: {FILTER_KWS}")
-print(f"🏷️  主題標籤: {TOPIC_LABEL}")
-
-# ===== 设定 =====
-# Telegram 配置统一从 tools/telegram_notifier.py 读取
-ARCHIVE_FILE = f"data/news/news_{SEARCH_KW}.md"
-ARCHIVE_JSON = f"data/news/news_{SEARCH_KW}.json"
+# ===== 全局状态（由 run_collection 初始化） =====
+SEARCH_KW = ""
+SEARCH_KW_ENCODED = ""
+FILTER_KWS = []
+TOPIC_LABEL = ""
+ARCHIVE_FILE = ""
+ARCHIVE_JSON = ""
+USER_KEYWORDS = []
 
 session = requests.Session()
 session.headers.update({
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
 })
+
+
+def init_keywords(keywords: list):
+    """根据关键词列表初始化全局搜索参数"""
+    global SEARCH_KW, SEARCH_KW_ENCODED, FILTER_KWS, TOPIC_LABEL, ARCHIVE_FILE, ARCHIVE_JSON, USER_KEYWORDS
+    USER_KEYWORDS = keywords
+    SEARCH_KW = keywords[0]
+    SEARCH_KW_ENCODED = requests.utils.quote(SEARCH_KW)
+    FILTER_KWS = [kw.lower() for kw in keywords]
+    TOPIC_LABEL = "、".join(keywords[:3])
+    if len(keywords) > 3:
+        TOPIC_LABEL += f"等{len(keywords)}個關鍵字"
+    safe_name = "_".join(keywords[:2]).replace("/", "_").replace(" ", "_")[:50]
+    ARCHIVE_FILE = f"data/news/news_{safe_name}.md"
+    ARCHIVE_JSON = f"data/news/news_{safe_name}.json"
+
 
 # 排除词
 EXCLUDE_KEYWORDS = [
@@ -511,18 +512,22 @@ def update_news_archive_md(articles: List[Dict]):
     log(f"[归档] {ARCHIVE_FILE} 已更新")
 
 
-def send_telegram(news: List[Dict]):
+def send_telegram(news: List[Dict], chat_id=None):
     if not news:
         log("[Telegram] 无文章，跳过")
-        return
+        return None
 
     # 按时间倒序排列
     news.sort(key=lambda x: x.get('datetime', ''), reverse=True)
 
-    # 导入 Telegram 通知工具配置
-    import sys
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    # 确保项目根目录在 path 中
+    _proj_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _proj_root not in sys.path:
+        sys.path.insert(0, _proj_root)
+
     from tools.telegram_notifier import BOT_TOKEN, CHAT_IDS
+
+    targets = [chat_id] if chat_id else CHAT_IDS
 
     keycaps = ["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"]
     max_items = 10
@@ -541,7 +546,6 @@ def send_telegram(news: List[Dict]):
         summary = a.get('summary', '')
         dt = a.get('datetime', '')[:16]
         url = a.get('url', '')
-        src = a.get('source', '')
         n = keycaps[i] if i < len(keycaps) else str(i + 1)
         lines.append(f"\n{n} <b>{title}</b>")
         lines.append(f"🕐{dt}")
@@ -556,19 +560,20 @@ def send_telegram(news: List[Dict]):
     lines.append(f"📡 来源：{source_list}")
 
     text = "\n".join(lines)
-    for chat_id in CHAT_IDS:
+    for cid in targets:
         try:
             resp = requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={
-                "chat_id": chat_id, "text": text, "parse_mode": "HTML",
+                "chat_id": cid, "text": text, "parse_mode": "HTML",
                 "disable_web_page_preview": True
             }, timeout=30)
             if resp.json().get('ok'):
-                log(f"[Telegram] ✅ → {chat_id}")
+                log(f"[Telegram] ✅ → {cid}")
             else:
-                log(f"[Telegram] ❌ {chat_id}: {resp.json()}")
+                log(f"[Telegram] ❌ {cid}: {resp.json()}")
         except Exception as e:
-            log(f"[Telegram] ❌ {chat_id}: {e}")
-    log(f"[Telegram] 发送 {len(news[:max_items])} 篇 → {len(CHAT_IDS)} 频道")
+            log(f"[Telegram] ❌ {cid}: {e}")
+    log(f"[Telegram] 发送 {len(news[:max_items])} 篇 → {len(targets)} 频道")
+    return text
 
 
 def git_sync():
@@ -588,17 +593,8 @@ def git_sync():
         log(f"[Git] ⚠️ {e}")
 
 
-# ===== 主程序 =====
-
-def main():
-    log("=" * 55)
-    log(f"📰 中国半导体新闻收集器 - 关键字：{TOPIC_LABEL}")
-    log("=" * 55)
-
-    log("\n[1] Git 同步...")
-    git_sync()
-
-    log("\n[2] 收集新闻...")
+def collect_all_raw():
+    """从所有来源收集原始文章"""
     raw = []
     raw += collect_eastmoney(); time.sleep(1)
     raw += collect_cls(); time.sleep(1)
@@ -609,9 +605,19 @@ def main():
     raw += collect_kcjrb(); time.sleep(1)
     raw += collect_sina(); time.sleep(1)
     raw += collect_tencent_tech()
+    return raw
+
+
+def collect_and_summarize(progress_callback=None):
+    """收集并摘要 — 返回 (summarized_articles, formatted_text)"""
+    if progress_callback:
+        progress_callback("🔍 正在搜索新闻来源...")
+
+    raw = collect_all_raw()
 
     unique = deduplicate(raw)
-    log(f"\n[3] 共 {len(unique)} 篇，各来源取最新 10 篇")
+    if progress_callback:
+        progress_callback(f"📋 去重后 {len(unique)} 篇")
 
     by_source = defaultdict(list)
     for n in unique:
@@ -620,9 +626,98 @@ def main():
     for src, items in by_source.items():
         items.sort(key=lambda x: x.get('datetime', ''), reverse=True)
         latest_pool.extend(items[:10])
-    log(f"[3] 每来源取最新10篇: {len(latest_pool)} 篇")
 
-    log(f"\n[4] 抓取内文并生成摘要...")
+    if progress_callback:
+        progress_callback(f"📝 正在生成 {len(latest_pool)} 篇摘要...")
+
+    summarized = []
+    for i, n in enumerate(latest_pool, 1):
+        item = build_news_item(n['title'], n['url'], n['source'], n['datetime'], n.get('_summary_hint', ''))
+        summarized.append(item)
+        time.sleep(1)
+
+    return summarized
+
+
+def run_collection(keywords, chat_id=None, do_archive=True, do_git=True, progress_callback=None):
+    """供 CLI/Bot 调用的统一入口
+
+    Args:
+        keywords: 关键字列表
+        chat_id: 指定 Telegram 发送目标（None 则使用默认频道）
+        do_archive: 是否存档 JSON/MD
+        do_git: 是否 git 同步
+        progress_callback: 可选进度回调，用于 Bot 实时反馈
+    """
+    if not keywords:
+        keywords = ["半导体设备", "国产替代", "AI芯片"]
+
+    init_keywords(keywords)
+
+    if progress_callback:
+        progress_callback(f"🔍 关键字: {TOPIC_LABEL}")
+
+    if do_git:
+        if progress_callback:
+            progress_callback("🔄 Git 同步...")
+        git_sync()
+
+    summarized = collect_and_summarize(progress_callback=progress_callback)
+
+    if do_archive:
+        if progress_callback:
+            progress_callback("💾 储存归档...")
+        save_archive_json(summarized)
+        update_news_archive_md(summarized)
+
+    if progress_callback:
+        progress_callback("📤 发送 Telegram...")
+
+    text = send_telegram(summarized, chat_id=chat_id)
+
+    if do_git:
+        if progress_callback:
+            progress_callback("🔄 Git 同步...")
+        git_sync()
+
+    return summarized, text
+
+
+# ===== CLI 入口 =====
+
+def main():
+    """命令行入口"""
+    keywords = sys.argv[1:] if len(sys.argv) > 1 else []
+    if not keywords:
+        print("用法: python news_collector_cn.py \"關鍵字1\" \"關鍵字2\" ...")
+        print("範例: python news_collector_cn.py \"半導體設備\" \"國產替代\" \"中芯國際\"")
+        sys.exit(1)
+
+    init_keywords(keywords)
+    log(f"🔍 关键字: {TOPIC_LABEL}")
+    print("=" * 55)
+    print(f"📰 中国半导体新闻收集器 - 关键字：{TOPIC_LABEL}")
+    print("=" * 55)
+
+    log("[1] Git 同步...")
+    git_sync()
+
+    log("[2] 收集新闻...")
+    raw = collect_all_raw()
+
+    unique = deduplicate(raw)
+    log(f"[3] 共 {len(unique)} 篇")
+
+    by_source = defaultdict(list)
+    for n in unique:
+        by_source[n['source']].append(n)
+    latest_pool = []
+    for src, items in by_source.items():
+        items.sort(key=lambda x: x.get('datetime', ''), reverse=True)
+        latest_pool.extend(items[:10])
+    log(f"[3] 各来源取最新10篇: {len(latest_pool)} 篇")
+
+    log("[4] 抓取内文并生成摘要...")
     summarized = []
     for i, n in enumerate(latest_pool, 1):
         log(f"  [{i}/{len(latest_pool)}] [{n['source']}] {n['title'][:40]}...")
@@ -630,19 +725,19 @@ def main():
         summarized.append(item)
         time.sleep(1)
 
-    log("\n[5] 储存归档...")
+    log("[5] 储存归档...")
     save_archive_json(summarized)
     update_news_archive_md(summarized)
 
-    log("\n[6] 发送 Telegram...")
+    log("[6] 发送 Telegram...")
     send_telegram(summarized)
 
-    log("\n[7] Git 同步...")
+    log("[7] Git 同步...")
     git_sync()
 
-    log("\n" + "=" * 55)
-    log(f"✅ 完成！{TOPIC_LABEL} 共摘要 {len(summarized)} 篇")
-    log("=" * 55)
+    print("\n" + "=" * 55)
+    print(f"✅ 完成！{TOPIC_LABEL} 共摘要 {len(summarized)} 篇")
+    print("=" * 55)
 
 
 if __name__ == "__main__":
