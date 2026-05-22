@@ -32,6 +32,7 @@ from tools.telegram_notifier import BOT_TOKEN, CHAT_IDS_PERSONAL
 API_BASE = f"https://api.telegram.org/bot{BOT_TOKEN}"
 POLL_INTERVAL = 3             # 轮询间隔（秒）
 COLLECTION_TIMEOUT = 120      # 新闻收集最大等待时间（秒）
+IS_CLOUD = bool(os.environ.get("RENDER"))  # 是否运行在 Render 云端
 
 # 默认关键字
 DEFAULT_KEYWORDS = ["半导体设备", "国产替代", "AI芯片", "中芯国际", "光刻机"]
@@ -136,8 +137,8 @@ def handle_chinasemi(chat_id, args):
         summarized, text = run_collection(
             keywords=keywords,
             chat_id=chat_id,
-            do_archive=True,
-            do_git=True,
+            do_archive=not IS_CLOUD,  # 云端不存档（无持久存储）
+            do_git=not IS_CLOUD,       # 云端不 git push
             progress_callback=progress
         )
 

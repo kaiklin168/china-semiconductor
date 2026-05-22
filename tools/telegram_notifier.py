@@ -8,11 +8,13 @@ import requests
 from datetime import datetime
 
 # ===== 配置 =====
-BOT_TOKEN = "8275897123:AAGdznYEtoywrA0mJ-qcXQMJIy1Upa2D5Ec"
+import os
+
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8275897123:AAGdznYEtoywrA0mJ-qcXQMJIy1Upa2D5Ec")
 
 # 频道配置（好朋友投资资讯快报暂时静默）
-CHAT_IDS_PERSONAL = "8696219136"      # 个人用户
-CHAT_IDS_FRIENDS = "-1003858055115"   # 好朋友投资资讯快报（暂时静默）
+CHAT_IDS_PERSONAL = os.environ.get("CHAT_ID_PERSONAL", "8696219136")      # 个人用户
+CHAT_IDS_FRIENDS = os.environ.get("CHAT_ID_FRIENDS", "-1003858055115")   # 好朋友投资资讯快报（暂时静默）
 CHAT_IDS = [CHAT_IDS_PERSONAL]        # 当前仅发送个人频道
 
 

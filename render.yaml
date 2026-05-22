@@ -1,0 +1,14 @@
+# Render Blueprint - 中国半导体 Telegram Bot
+# https://render.com/docs/blueprint-spec
+
+services:
+  - type: worker           # 后台常驻进程（不需 HTTP 端口）
+    name: china-semi-bot
+    env: python
+    region: singapore      # 新加坡节点，离亚洲近
+    buildCommand: pip install -r requirements.txt
+    startCommand: python scripts/telegram_bot.py
+    plan: free             # 免费方案
+    # 环境变量请在 Render Dashboard 中设定：
+    #   BOT_TOKEN          — Telegram Bot Token
+    #   CHAT_ID_PERSONAL   — 个人 Chat ID（可选，有默认值）
